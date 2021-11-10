@@ -610,6 +610,9 @@ _mesa_compute_version(struct gl_context *ctx)
       goto done;
 
    ctx->Version = _mesa_get_version(&ctx->Extensions, &ctx->Const, ctx->API);
+   // HACK: Downgrade GLES2 version to 3.1.
+   if (ctx->API == API_OPENGLES2 && ctx->Version > 31)
+     ctx->Version = 31;
    ctx->Extensions.Version = ctx->Version;
 
    /* Make sure that the GLSL version lines up with the GL version. In some

@@ -40,7 +40,8 @@ LOCAL_SRC_FILES := \
 
 LOCAL_CFLAGS := \
 	-D_EGL_NATIVE_PLATFORM=_EGL_PLATFORM_ANDROID \
-	-DHAVE_ANDROID_PLATFORM
+	-DHAVE_ANDROID_PLATFORM	\
+	-Wno-implicit-function-declaration
 
 LOCAL_C_INCLUDES := \
 	$(MESA_TOP)/include/drm-uapi \

@@ -327,7 +327,7 @@ else
   with_egl = false
 endif
 
-if with_egl and not (with_platform_drm or with_platform_surfaceless)
+if with_egl and not (with_platform_drm or with_platform_surfaceless or with_platform_android)
   if with_gallium_radeonsi
     error('RadeonSI requires drm or surfaceless platform when using EGL')
   endif
@@ -367,6 +367,9 @@ if with_glvnd
     error('Cannot build glvnd support for GLX that is not DRI based.')
   elif with_glx == 'disabled' and not with_egl
     error('glvnd requires DRI based GLX and/or EGL')
+  endif
+  if get_option('egl-lib-suffix') != ''
+    error('''EGL lib suffix can't be used with libglvnd''')
   endif
 endif
 
@@ -714,6 +717,9 @@ if with_platform_android
     dependency('hardware'),
     dependency('sync'),
   ]
+  if get_option('platform-sdk-version') >= 26
+    dep_android += dependency('nativewindow')
+  endif
   pre_args += '-DHAVE_ANDROID_PLATFORM'
 endif
 if with_platform_haiku

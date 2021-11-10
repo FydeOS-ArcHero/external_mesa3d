@@ -68,6 +68,16 @@ static bool
 radv_use_tc_compat_htile_for_image(struct radv_device *device,
 				   const VkImageCreateInfo *pCreateInfo)
 {
+	/* Disable texture compatible HTILE on Stoney. We have the following
+	 * failing tests:
+	 * dEQP-VK.glsl.builtin_var.fragdepth.*_list_d32_sfloat_multisample_8
+	 * dEQP-VK.pipeline.render_to_image.*_unorm_d32_sfloat_s8_uint
+	 *
+	 * TODO: find underlying cause, this should work theoretically.
+	 */
+	if (device->physical_device->rad_info.family == CHIP_STONEY)
+		return false;
+
 	/* TC-compat HTILE is only available for GFX8+. */
 	if (device->physical_device->rad_info.chip_class < VI)
 		return false;
@@ -747,6 +757,34 @@ radv_init_metadata(struct radv_device *device,
 		metadata->u.legacy.scanout = (surface->flags & RADEON_SURF_SCANOUT) != 0;
 	}
 	radv_query_opaque_metadata(device, image, metadata);
+}
+
+void
+radv_image_override_offset_stride(struct radv_device *device,
+                                  struct radv_image *image,
+                                  uint64_t offset, uint32_t stride)
+{
+	struct radeon_surf *surface = &image->surface;
+	unsigned bpe = vk_format_get_blocksizebits(image->vk_format) / 8;
+
+	if (device->physical_device->rad_info.chip_class >= GFX9) {
+		if (stride) {
+			surface->u.gfx9.surf_pitch = stride;
+			surface->u.gfx9.surf_slice_size =
+				(uint64_t)stride * surface->u.gfx9.surf_height * bpe;
+		}
+		surface->u.gfx9.surf_offset = offset;
+	} else {
+		surface->u.legacy.level[0].nblk_x = stride;
+		surface->u.legacy.level[0].slice_size_dw =
+			((uint64_t)stride * surface->u.legacy.level[0].nblk_y * bpe) / 4;
+
+		if (offset) {
+			for (unsigned i = 0; i < ARRAY_SIZE(surface->u.legacy.level); ++i)
+				surface->u.legacy.level[i].offset += offset;
+		}
+
+	}
 }
 
 /* The number of samples can be specified independently of the texture. */

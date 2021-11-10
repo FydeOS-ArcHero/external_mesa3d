@@ -1556,6 +1556,29 @@ AC_ARG_WITH([osmesa-lib-name],
 GL_LIB="$DEFAULT_GL_LIB_NAME"
 OSMESA_LIB=OSMesa
 
+AC_ARG_WITH([egl-lib-suffix],
+  [AS_HELP_STRING([--with-egl-lib-suffix@<:@=NAME@:>@],
+    [specify EGL library suffix @<:@default=none@:>@])],
+  [EGL_LIB_SUFFIX=$withval],
+  [EGL_LIB_SUFFIX=""])
+AC_ARG_WITH([gles-lib-suffix],
+  [AS_HELP_STRING([--with-gles-lib-suffix@<:@=NAME@:>@],
+    [specify GLES library suffix @<:@default=none@:>@])],
+  [GLES_LIB_SUFFIX=$withval],
+  [GLES_LIB_SUFFIX=""])
+AS_IF([test "x$EGL_LIB_SUFFIX" = xyes], [EGL_LIB_SUFFIX=""])
+AS_IF([test "x$GLES_LIB_SUFFIX" = xyes], [GLES_LIB_SUFFIX=""])
+
+if test "x$enable_libglvnd" = xyes -a "x$EGL_LIB_SUFFIX" != x; then
+    AC_MSG_ERROR([EGL lib suffix can't be used with libglvnd])
+fi
+
+AC_ARG_WITH([platform-sdk-version],
+  [AS_HELP_STRING([--with-platform-sdk-version@<:@=NAME@:>@],
+    [specify Android platform SDK version @<:@default=none@:>@])],
+  [platform_sdk_version=$withval],
+  [platform_sdk_version=""])
+
 dnl
 dnl Mangled Mesa support
 dnl
@@ -1574,6 +1597,8 @@ if test "x${enable_mangling}" = "xyes" ; then
   OSMESA_LIB="Mangled${OSMESA_LIB}"
 fi
 AC_SUBST([GL_LIB])
+AC_SUBST([EGL_LIB_SUFFIX])
+AC_SUBST([GLES_LIB_SUFFIX])
 AC_SUBST([OSMESA_LIB])
 
 dnl HACK when building glx + glvnd we ship gl.pc, despite that glvnd should do it
@@ -1888,7 +1913,12 @@ for plat in $platforms; do
         ;;
 
     android)
-        PKG_CHECK_MODULES([ANDROID], [cutils hardware sync])
+        if test -n "$platform_sdk_version" && test "$platform_sdk_version" -ge 26; then
+            PKG_CHECK_MODULES([ANDROID], [cutils hardware nativewindow sync])
+        else
+            PKG_CHECK_MODULES([ANDROID], [cutils hardware sync])
+        fi
+
         if test -n "$with_gallium_drivers"; then
             PKG_CHECK_MODULES([BACKTRACE], [backtrace])
         fi

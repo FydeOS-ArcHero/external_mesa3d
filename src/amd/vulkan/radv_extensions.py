@@ -53,13 +53,13 @@ EXTENSIONS = [
     Extension('VK_ANDROID_native_buffer',                 5, 'ANDROID && device->rad_info.has_syncobj_wait_for_submit'),
     Extension('VK_KHR_16bit_storage',                     1, True),
     Extension('VK_KHR_bind_memory2',                      1, True),
-    Extension('VK_KHR_create_renderpass2',                1, True),
+    Extension('VK_KHR_create_renderpass2',                1, False),
     Extension('VK_KHR_dedicated_allocation',              1, True),
     Extension('VK_KHR_descriptor_update_template',        1, True),
     Extension('VK_KHR_device_group',                      1, True),
     Extension('VK_KHR_device_group_creation',             1, True),
     Extension('VK_KHR_draw_indirect_count',               1, True),
-    Extension('VK_KHR_driver_properties',                 1, True),
+    Extension('VK_KHR_driver_properties',                 1, False),
     Extension('VK_KHR_external_fence',                    1, 'device->rad_info.has_syncobj_wait_for_submit'),
     Extension('VK_KHR_external_fence_capabilities',       1, True),
     Extension('VK_KHR_external_fence_fd',                 1, 'device->rad_info.has_syncobj_wait_for_submit'),
@@ -120,8 +120,8 @@ EXTENSIONS = [
     Extension('VK_AMD_shader_core_properties',            1, True),
     Extension('VK_AMD_shader_info',                       1, True),
     Extension('VK_AMD_shader_trinary_minmax',             1, True),
-    Extension('VK_GOOGLE_decorate_string',                1, True),
-    Extension('VK_GOOGLE_hlsl_functionality1',            1, True),
+    Extension('VK_GOOGLE_decorate_string',                1, False),
+    Extension('VK_GOOGLE_hlsl_functionality1',            1, False),
 ]
 
 class VkVersion:

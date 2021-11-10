@@ -479,6 +479,10 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *dpy,
          break;
 
       case 3:
+          // HACK: Disallow creating contexts newer than 3.1.
+          if (ctx->ClientMinorVersion > 1)
+            err = EGL_BAD_MATCH;
+
          /* Note: The text above is incorrect.  There *is* an OpenGL 3.3!
           */
          if (ctx->ClientMinorVersion > 3)

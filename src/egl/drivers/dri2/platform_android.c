@@ -103,6 +103,9 @@ get_format_bpp(int native)
    int bpp;
 
    switch (native) {
+   case HAL_PIXEL_FORMAT_RGBA_FP16:
+      bpp = 8;
+      break;
    case HAL_PIXEL_FORMAT_RGBA_8888:
    case HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED:
       /*
@@ -111,6 +114,7 @@ get_format_bpp(int native)
        */
    case HAL_PIXEL_FORMAT_RGBX_8888:
    case HAL_PIXEL_FORMAT_BGRA_8888:
+   case HAL_PIXEL_FORMAT_RGBA_1010102:
       bpp = 4;
       break;
    case HAL_PIXEL_FORMAT_RGB_565:
@@ -137,6 +141,8 @@ static int get_fourcc(int native)
        * TODO: Remove this once https://issuetracker.google.com/32077885 is fixed.
        */
    case HAL_PIXEL_FORMAT_RGBX_8888: return __DRI_IMAGE_FOURCC_XBGR8888;
+   case HAL_PIXEL_FORMAT_RGBA_FP16: return __DRI_IMAGE_FOURCC_ABGR16161616F;
+   case HAL_PIXEL_FORMAT_RGBA_1010102: return __DRI_IMAGE_FOURCC_ABGR2101010;
    default:
       _eglLog(_EGL_WARNING, "unsupported native buffer format 0x%x", native);
    }
@@ -155,6 +161,8 @@ static int get_format(int format)
        * TODO: Revert this once https://issuetracker.google.com/32077885 is fixed.
        */
    case HAL_PIXEL_FORMAT_RGBX_8888: return __DRI_IMAGE_FORMAT_XBGR8888;
+   case HAL_PIXEL_FORMAT_RGBA_FP16: return __DRI_IMAGE_FORMAT_ABGR16161616F;
+   case HAL_PIXEL_FORMAT_RGBA_1010102: return __DRI_IMAGE_FORMAT_ABGR2101010;
    default:
       _eglLog(_EGL_WARNING, "unsupported native buffer format 0x%x", format);
    }
@@ -217,13 +225,11 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
         close(fence_fd);
    }
 
-   dri2_surf->buffer->common.incRef(&dri2_surf->buffer->common);
-
    /* Record all the buffers created by ANativeWindow and update back buffer
     * for updating buffer's age in swap_buffers.
     */
    EGLBoolean updated = EGL_FALSE;
-   for (int i = 0; i < ARRAY_SIZE(dri2_surf->color_buffers); i++) {
+   for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
       if (!dri2_surf->color_buffers[i].buffer) {
          dri2_surf->color_buffers[i].buffer = dri2_surf->buffer;
       }
@@ -238,7 +244,7 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
       /* In case of all the buffers were recreated by ANativeWindow, reset
        * the color_buffers
        */
-      for (int i = 0; i < ARRAY_SIZE(dri2_surf->color_buffers); i++) {
+      for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
          dri2_surf->color_buffers[i].buffer = NULL;
          dri2_surf->color_buffers[i].age = 0;
       }
@@ -275,7 +281,6 @@ droid_window_enqueue_buffer(_EGLDisplay *disp, struct dri2_egl_surface *dri2_sur
    dri2_surf->window->queueBuffer(dri2_surf->window, dri2_surf->buffer,
                                   fence_fd);
 
-   dri2_surf->buffer->common.decRef(&dri2_surf->buffer->common);
    dri2_surf->buffer = NULL;
    dri2_surf->back = NULL;
 
@@ -298,6 +303,7 @@ droid_window_cancel_buffer(struct dri2_egl_surface *dri2_surf)
    dri2_surf->out_fence_fd = -1;
    ret = dri2_surf->window->cancelBuffer(dri2_surf->window,
                                          dri2_surf->buffer, fence_fd);
+   dri2_surf->buffer = NULL;
    if (ret < 0) {
       _eglLog(_EGL_WARNING, "ANativeWindow::cancelBuffer failed");
       dri2_surf->base.Lost = EGL_TRUE;
@@ -353,6 +359,7 @@ droid_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
 
    if (type == EGL_WINDOW_BIT) {
       int format;
+      int buffer_count;
 
       if (window->common.magic != ANDROID_NATIVE_WINDOW_MAGIC) {
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
@@ -362,6 +369,26 @@ droid_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
          goto cleanup_surface;
       }
+
+      /* Query ANativeWindow for MIN_UNDEQUEUED_BUFFER, set buffer count
+       * and allocate color_buffers.
+       */
+      if (window->query(window, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
+                        &buffer_count)) {
+         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
+         goto cleanup_surface;
+      }
+      if (native_window_set_buffer_count(window, buffer_count+1)) {
+         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
+         goto cleanup_surface;
+      }
+      dri2_surf->color_buffers = calloc(buffer_count+1,
+                                        sizeof(*dri2_surf->color_buffers));
+      if (!dri2_surf->color_buffers) {
+         _eglError(EGL_BAD_ALLOC, "droid_create_surface");
+         goto cleanup_surface;
+      }
+      dri2_surf->color_buffers_count = buffer_count+1;
 
       if (format != dri2_conf->base.NativeVisualID) {
          _eglLog(_EGL_WARNING, "Native format mismatch: 0x%x != 0x%x",
@@ -399,6 +426,8 @@ droid_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
    return &dri2_surf->base;
 
 cleanup_surface:
+   if (dri2_surf->color_buffers_count)
+      free(dri2_surf->color_buffers);
    free(dri2_surf);
 
    return NULL;
@@ -451,6 +480,7 @@ droid_destroy_surface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
    dri2_dpy->core->destroyDrawable(dri2_surf->dri_drawable);
 
    dri2_fini_surface(surf);
+   free(dri2_surf->color_buffers);
    free(dri2_surf);
 
    return EGL_TRUE;
@@ -692,7 +722,7 @@ droid_swap_buffers(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *draw)
       return EGL_TRUE;
    }
 
-   for (int i = 0; i < ARRAY_SIZE(dri2_surf->color_buffers); i++) {
+   for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
       if (dri2_surf->color_buffers[i].age > 0)
          dri2_surf->color_buffers[i].age++;
    }
@@ -1136,12 +1166,16 @@ droid_add_configs_for_visuals(_EGLDriver *drv, _EGLDisplay *dpy)
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(dpy);
    static const struct {
       int format;
-      unsigned int rgba_masks[4];
+      int rgba_shifts[4];
+      unsigned int rgba_sizes[4];
    } visuals[] = {
-      { HAL_PIXEL_FORMAT_RGBA_8888, { 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000 } },
-      { HAL_PIXEL_FORMAT_RGBX_8888, { 0x000000ff, 0x0000ff00, 0x00ff0000, 0x00000000 } },
-      { HAL_PIXEL_FORMAT_RGB_565,   { 0x0000f800, 0x000007e0, 0x0000001f, 0x00000000 } },
-      { HAL_PIXEL_FORMAT_BGRA_8888, { 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000 } },
+      { HAL_PIXEL_FORMAT_RGBA_8888, { 0, 8, 16, 24 }, { 8, 8, 8, 8 } },
+      { HAL_PIXEL_FORMAT_RGBX_8888, { 0, 8, 16, -1 }, { 8, 8, 8, 0 } },
+      { HAL_PIXEL_FORMAT_RGB_565,   { 11, 5, 0, -1 }, { 5, 6, 5, 0 } },
+      /* This must be after HAL_PIXEL_FORMAT_RGBA_8888, we only keep BGRA
+       * visual if it turns out RGBA visual is not available.
+       */
+      { HAL_PIXEL_FORMAT_BGRA_8888, { 16, 8, 0, 24 }, { 8, 8, 8, 8 } },
    };
 
    unsigned int format_count[ARRAY_SIZE(visuals)] = { 0 };
@@ -1165,7 +1199,13 @@ droid_add_configs_for_visuals(_EGLDriver *drv, _EGLDisplay *dpy)
     * (chadversary) testing on Android Nougat, this was good enough to pacify
     * the buggy clients.
     */
+   bool has_rgba = false;
    for (int i = 0; i < ARRAY_SIZE(visuals); i++) {
+      /* Only enable BGRA configs when RGBA is not available. BGRA configs are
+       * buggy on stock Android.
+       */
+      if (visuals[i].format == HAL_PIXEL_FORMAT_BGRA_8888 && has_rgba)
+         continue;
       for (int j = 0; dri2_dpy->driver_configs[j]; j++) {
          const EGLint surface_type = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
 
@@ -1180,13 +1220,15 @@ droid_add_configs_for_visuals(_EGLDriver *drv, _EGLDisplay *dpy)
          struct dri2_egl_config *dri2_conf =
             dri2_add_config(dpy, dri2_dpy->driver_configs[j],
                             config_count + 1, surface_type, config_attrs,
-                            visuals[i].rgba_masks);
+                            visuals[i].rgba_shifts, visuals[i].rgba_sizes);
          if (dri2_conf) {
             if (dri2_conf->base.ConfigID == config_count + 1)
                config_count++;
             format_count[i]++;
          }
       }
+      if (visuals[i].format == HAL_PIXEL_FORMAT_RGBA_8888 && format_count[i])
+         has_rgba = true;
    }
 
    for (int i = 0; i < ARRAY_SIZE(format_count); i++) {
@@ -1200,11 +1242,11 @@ droid_add_configs_for_visuals(_EGLDriver *drv, _EGLDisplay *dpy)
 }
 
 static EGLBoolean
-droid_probe_device(_EGLDisplay *disp);
+droid_probe_device(_EGLDisplay *disp, bool swrast);
 
 #ifdef HAVE_DRM_GRALLOC
 static EGLBoolean
-droid_open_device_drm_gralloc(_EGLDisplay *disp)
+droid_open_device_drm_gralloc(_EGLDisplay *disp, bool swrast)
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    int fd = -1, err = -EINVAL;
@@ -1222,7 +1264,7 @@ droid_open_device_drm_gralloc(_EGLDisplay *disp)
    if (dri2_dpy->fd < 0)
      return EGL_FALSE;
 
-   return droid_probe_device(disp);
+   return droid_probe_device(disp, swrast);
 }
 #endif /* HAVE_DRM_GRALLOC */
 
@@ -1368,12 +1410,27 @@ static const __DRIextension *droid_image_loader_extensions[] = {
 };
 
 static EGLBoolean
-droid_load_driver(_EGLDisplay *disp)
+droid_load_driver(_EGLDisplay *disp, bool swrast)
 {
    struct dri2_egl_display *dri2_dpy = disp->DriverData;
    const char *err;
 
-   dri2_dpy->driver_name = loader_get_driver_for_fd(dri2_dpy->fd);
+   char *driver_name = loader_get_driver_for_fd(dri2_dpy->fd);
+   if (swrast) {
+         /* Use kms swrast only with vgem / virtio_gpu.
+          * virtio-gpu fallbacks to software rendering when 3D features
+          * are unavailable since 6c5ab, and kms_swrast is more
+          * feature complete than swrast.
+          */
+         if (strcmp(driver_name, "vgem") == 0 ||
+             strcmp(driver_name, "virtio_gpu") == 0)
+            dri2_dpy->driver_name = strdup("kms_swrast");
+         free(driver_name);
+   } else {
+         /* Use the given hardware driver */
+         dri2_dpy->driver_name = driver_name;
+   }
+
    if (dri2_dpy->driver_name == NULL)
       return false;
 
@@ -1437,13 +1494,13 @@ droid_filter_device(_EGLDisplay *disp, int fd, const char *vendor)
 }
 
 static EGLBoolean
-droid_probe_device(_EGLDisplay *disp)
+droid_probe_device(_EGLDisplay *disp, bool swrast)
 {
   /* Check that the device is supported, by attempting to:
    * - load the dri module
    * - and, create a screen
    */
-   if (!droid_load_driver(disp))
+   if (!droid_load_driver(disp, swrast))
       return EGL_FALSE;
 
    if (!dri2_create_screen(disp)) {
@@ -1455,7 +1512,7 @@ droid_probe_device(_EGLDisplay *disp)
 }
 
 static EGLBoolean
-droid_open_device(_EGLDisplay *disp)
+droid_open_device(_EGLDisplay *disp, bool swrast)
 {
 #define MAX_DRM_DEVICES 32
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
@@ -1498,14 +1555,14 @@ droid_open_device(_EGLDisplay *disp)
          /* If the requested device matches - use it. Regardless if
           * init fails, do not fall-back to any other device.
           */
-         if (!droid_probe_device(disp)) {
+         if (!droid_probe_device(disp, swrast)) {
             close(dri2_dpy->fd);
             dri2_dpy->fd = -1;
          }
 
          break;
       }
-      if (droid_probe_device(disp))
+      if (droid_probe_device(disp, swrast))
          break;
 
       /* No explicit request - attempt the next device */
@@ -1551,9 +1608,10 @@ dri2_initialize_android(_EGLDriver *drv, _EGLDisplay *disp)
    disp->DriverData = (void *) dri2_dpy;
 
 #ifdef HAVE_DRM_GRALLOC
-   if (!droid_open_device_drm_gralloc(disp)) {
+   if (!droid_open_device_drm_gralloc(disp, false) &&
+       !droid_open_device_drm_gralloc(disp, true)) {
 #else
-   if (!droid_open_device(disp)) {
+   if (!droid_open_device(disp, false) && !droid_open_device(disp, true)) {
 #endif
       err = "DRI2: failed to open device";
       goto cleanup;
@@ -1583,10 +1641,18 @@ dri2_initialize_android(_EGLDriver *drv, _EGLDisplay *disp)
    disp->Extensions.ANDROID_framebuffer_target = EGL_TRUE;
    disp->Extensions.ANDROID_image_native_buffer = EGL_TRUE;
    disp->Extensions.ANDROID_recordable = EGL_TRUE;
-   disp->Extensions.EXT_buffer_age = EGL_TRUE;
+
+   /* Querying buffer age requires a buffer to be dequeued.  Without
+    * EGL_ANDROID_native_fence_sync, dequeue might call eglClientWaitSync and
+    * result in a deadlock (the lock is already held by eglQuerySurface).
+    */
+   if (disp->Extensions.ANDROID_native_fence_sync) {
+      disp->Extensions.EXT_buffer_age = EGL_TRUE;
 #if ANDROID_API_LEVEL >= 23
-   disp->Extensions.KHR_partial_update = EGL_TRUE;
+      disp->Extensions.KHR_partial_update = EGL_TRUE;
 #endif
+   }
+
    disp->Extensions.KHR_image = EGL_TRUE;
 #if ANDROID_API_LEVEL >= 24
    if (dri2_dpy->mutable_render_buffer &&

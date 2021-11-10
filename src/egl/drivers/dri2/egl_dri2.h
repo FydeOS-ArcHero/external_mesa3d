@@ -322,13 +322,14 @@ struct dri2_egl_surface
    __DRIimage *dri_image_front;
 
    /* Used to record all the buffers created by ANativeWindow and their ages.
-    * Usually Android uses at most triple buffers in ANativeWindow
-    * so hardcode the number of color_buffers to 3.
+    * Allocate number of color_buffers based on query to android bufferqueue
+    * and save color_buffers_count.
     */
+   int color_buffers_count;
    struct {
       struct ANativeWindowBuffer *buffer;
       int age;
-   } color_buffers[3], *back;
+   } *color_buffers, *back;
 #endif
 
 #if defined(HAVE_SURFACELESS_PLATFORM)
@@ -402,10 +403,20 @@ dri2_surface_get_dri_drawable(_EGLSurface *surf);
 __DRIimage *
 dri2_lookup_egl_image(__DRIscreen *screen, void *image, void *data);
 
+void
+dri2_get_shifts_and_sizes(const __DRIcoreExtension *core,
+		          const __DRIconfig *config, int *shifts,
+			  unsigned int *sizes);
+
+void
+dri2_get_render_type_float(const __DRIcoreExtension *core,
+                           const __DRIconfig *config,
+                           bool *is_float);
+
 struct dri2_egl_config *
 dri2_add_config(_EGLDisplay *disp, const __DRIconfig *dri_config, int id,
                 EGLint surface_type, const EGLint *attr_list,
-                const unsigned int *rgba_masks);
+                const int *rgba_shifts, const unsigned int *rgba_sizes);
 
 _EGLImage *
 dri2_create_image_khr(_EGLDriver *drv, _EGLDisplay *disp,

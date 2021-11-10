@@ -111,7 +111,6 @@ endforeach
 
 libanv_files = files(
   'anv_allocator.c',
-  'anv_android_stubs.c',
   'anv_android.h',
   'anv_batch_chain.c',
   'anv_blorp.c',
@@ -176,6 +175,13 @@ if with_xlib_lease
   anv_flags += '-DVK_USE_PLATFORM_XLIB_XRANDR_EXT'
 endif
 
+if with_platform_android
+  anv_flags += '-DVK_USE_PLATFORM_ANDROID_KHR'
+  libanv_files += files('anv_android.c')
+else
+  libanv_files += files('anv_android_stubs.c')
+endif
+
 libanv_common = static_library(
   'anv_common',
   [
@@ -199,11 +205,11 @@ libvulkan_intel = shared_library(
   ],
   link_whole : [libanv_common, libanv_gen_libs],
   link_with : [
-    libintel_compiler, libintel_common, libintel_dev, libisl, libblorp,
-    libvulkan_util, libvulkan_wsi, libmesa_util,
+    libintel_compiler, libintel_dev, libisl, libblorp, libvulkan_util,
+    libvulkan_wsi, libmesa_util,
   ],
   dependencies : [
-    dep_thread, dep_dl, dep_m, anv_deps, idep_nir,
+    dep_thread, dep_dl, dep_m, anv_deps, idep_libintel_common, idep_nir,
   ],
   c_args : anv_flags,
   link_args : ['-Wl,--build-id=sha1', ld_args_bsymbolic, ld_args_gc_sections],
